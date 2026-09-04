@@ -10,6 +10,7 @@ optimization recommendations.
 It is deliberately **not** another tracing tool. It consumes the OpenTelemetry GenAI
 traces you already emit.
 
+[![GitHub](https://img.shields.io/badge/GitHub-thunderhill%2Ftokenomics-181717?logo=github)](https://github.com/thunderhill/tokenomics)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)
 
