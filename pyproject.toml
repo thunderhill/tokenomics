@@ -1,0 +1,81 @@
+[project]
+name = "tokenomics"
+version = "0.1.0"
+description = "FinOps observability and cost governance for multi-LLM applications"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.12,<3.13"
+authors = [{ name = "Tokenomics contributors" }]
+keywords = ["finops", "llm", "opentelemetry", "cost", "observability"]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: System :: Monitoring",
+]
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.32",
+  "pydantic>=2.9",
+  "pydantic-settings>=2.6",
+  "psycopg[binary,pool]>=3.2",
+  "opentelemetry-proto>=1.28",
+  "prometheus-client>=0.21",
+  "httpx>=0.27",
+  "typer>=0.15",
+]
+
+[project.optional-dependencies]
+sdk = ["opentelemetry-sdk>=1.28", "opentelemetry-exporter-otlp-proto-http>=1.28"]
+
+[project.scripts]
+tokenomics = "tokenomics.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/tokenomics-dev/tokenomics"
+Source = "https://github.com/tokenomics-dev/tokenomics"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "hypothesis>=6.115",
+  "ruff>=0.8",
+  "mypy>=1.13",
+  "types-protobuf>=5.28",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tokenomics"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "SIM", "RUF", "ANN", "PTH"]
+ignore = ["ANN401"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ANN"]
+"demo/**" = ["ANN"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+mypy_path = "src"
+packages = ["tokenomics"]
+
+[[tool.mypy.overrides]]
+module = ["opentelemetry.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: requires TOKENOMICS_TEST_PG_URL (deselect with -m 'not integration')"]
+addopts = "-q --strict-markers"

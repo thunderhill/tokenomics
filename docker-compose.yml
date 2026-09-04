@@ -1,0 +1,59 @@
+# One-command self-hosting: `docker compose up`.
+#
+# Nothing here reaches outside the host. The API auto-migrates and creates the current
+# partition on startup (TOKENOMICS_AUTO_MIGRATE=true is the default); pricing runs off
+# the snapshot vendored in the image, so no network access is required to be useful --
+# `tokenomics pricing refresh` inside the api container is the one deliberate exception.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tokenomics
+      POSTGRES_PASSWORD: tokenomics
+      POSTGRES_DB: tokenomics
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tokenomics -d tokenomics"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    environment:
+      TOKENOMICS_DATABASE_URL: postgresql://tokenomics:tokenomics@postgres:5432/tokenomics
+      TOKENOMICS_CORS_ORIGINS: '["http://localhost:5173","http://localhost:4173"]'
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build: ./apps/web
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+
+  # Optional: a real OTel Collector for exporters that only speak gRPC. Not started by
+  # default (`docker compose --profile collector up`) since the API's own OTLP/HTTP
+  # endpoint is enough for the Python/TS SDKs and the demo.
+  collector:
+    image: otel/opentelemetry-collector-contrib:0.114.0
+    profiles: ["collector"]
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./deploy/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4317:4317" # OTLP gRPC
+    depends_on:
+      - api
+
+volumes:
+  pgdata:

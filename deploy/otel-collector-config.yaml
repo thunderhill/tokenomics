@@ -1,0 +1,27 @@
+# Bridges OTLP/gRPC (what most GenAI instrumentation defaults to) to the Tokenomics
+# API's OTLP/HTTP ingest endpoint. Running a Collector for this, rather than
+# implementing a gRPC server in the API, gets batching, retries and backpressure for
+# free from a component whose entire job is exactly that.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 500
+
+exporters:
+  otlphttp:
+    endpoint: http://api:8000
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp]
