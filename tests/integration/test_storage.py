@@ -4,16 +4,20 @@ from __future__ import annotations
 
 from datetime import timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
 from tokenomics.finops import tokens as token_service
+from tokenomics.importers.dsh import import_paths, parse_session_file
 from tokenomics.models import TokenVector, UsageEvent
 from tokenomics.pricing import cost
 from tokenomics.storage import queries, repository
 from tokenomics.storage.queries import InvalidDimensionError
 
 pytestmark = pytest.mark.integration
+
+FIXTURES = Path(__file__).parent.parent / "fixtures"
 
 
 def test_events_insert_and_aggregate(conn, make_event, window) -> None:
@@ -64,6 +68,52 @@ def test_an_unpriced_event_is_stored_as_null_not_zero(conn, window, now) -> None
 
     unpriced = queries.unpriced_summary(conn, filters=window())
     assert unpriced[0]["model"] == "acme/never-heard-of-it"
+
+
+def test_reimporting_the_same_dsh_session_file_does_not_double_bill(conn) -> None:
+    """Re-running ``tokenomics import dsh`` over the same file must be a no-op the second time.
+
+    The importer derives (trace_id, span_id) deterministically from (session, turn, step,
+    attempt) rather than generating fresh ids, so this is the same idempotency contract
+    ``insert_events`` already gives the OTLP path -- just exercised end to end through the
+    importer instead of built by hand.
+    """
+    first_pass = list(parse_session_file(FIXTURES / "dsh_session.jsonl"))
+    second_pass = list(parse_session_file(FIXTURES / "dsh_session.jsonl"))
+    assert len(first_pass) == 1  # sanity: the fixture carries exactly one completed call
+
+    assert repository.insert_events(conn, first_pass) == 1
+    assert repository.insert_events(conn, second_pass) == 0
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM usage_event WHERE subject_id = %s",
+            (first_pass[0].attribution.subject_id,),
+        )
+        row = cur.fetchone()
+    assert row is not None
+    assert row[0] == 1
+
+
+def test_dsh_import_pipeline_stores_the_event_unpriced(conn, engine) -> None:
+    """End-to-end through ``import_paths`` (parse + price), not just the parser in isolation.
+
+    The captured session is Ollama-backed ``deepseek-r1:8b``: self-hosted, so it must land
+    UNPRICED (never a guessed cross-provider rate) -- see test_resolver.py's regression guard
+    for why that matters.
+    """
+    result = import_paths([FIXTURES / "dsh_session.jsonl"], engine)
+    assert result.events_unpriced == 1
+    repository.insert_events(conn, result.events)
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT cost_usd FROM usage_event WHERE subject_id = %s",
+            (result.events[0].attribution.subject_id,),
+        )
+        row = cur.fetchone()
+    assert row is not None
+    assert row[0] is None
 
 
 def test_attribution_filters_and_grouping(conn, make_event, window) -> None:

@@ -7,8 +7,10 @@ boxes and the demo. The only subcommand that touches the network is ``pricing re
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -20,6 +22,7 @@ from tokenomics.finops import reports as report_service
 from tokenomics.finops import tokens as token_service
 from tokenomics.finops import whatif as whatif_service
 from tokenomics.finops.reports import Allocation
+from tokenomics.importers import dsh as dsh_importer
 from tokenomics.pricing.engine import default_engine
 from tokenomics.pricing.pricebook import LITELLM_URL, PriceBook
 from tokenomics.storage import database, queries, repository
@@ -33,8 +36,10 @@ app = typer.Typer(
 )
 pricing_app = typer.Typer(help="Pricing snapshots.", no_args_is_help=True)
 db_app = typer.Typer(help="Database maintenance.", no_args_is_help=True)
+import_app = typer.Typer(help="Batch importers.", no_args_is_help=True)
 app.add_typer(pricing_app, name="pricing")
 app.add_typer(db_app, name="db")
+app.add_typer(import_app, name="import")
 
 Days = Annotated[int, typer.Option(help="Look back this many days.")]
 
@@ -104,6 +109,56 @@ def pricing_refresh(
         with database.connection() as conn:
             repository.record_snapshot(conn, book)
     typer.echo(f"fetched {len(book)} models; snapshot {book.snapshot_id}")
+
+
+def _dsh_sessions_root() -> Path:
+    home = os.environ.get("DSH_HOME", "").strip()
+    base = Path(home) if home else Path.home() / ".dsh"
+    return base / "sessions"
+
+
+@import_app.command("dsh")
+def import_dsh(
+    path: Annotated[
+        Path | None,
+        typer.Argument(help="A session file, or a directory to scan. Default: $DSH_HOME/sessions"),
+    ] = None,
+) -> None:
+    """Import DeepSeek Harness (dsh) session logs as priced usage events.
+
+    Batch, not live: dsh's own OTel exporter emits Logs (not the Traces this project ingests),
+    with best-effort delivery and no durable outbox. The session log on disk is the complete,
+    replayable source -- see ``tokenomics.importers.dsh`` for the full rationale.
+    """
+    root = path or _dsh_sessions_root()
+    files = [root] if root.is_file() else dsh_importer.find_session_files(root)
+    if not files:
+        typer.echo(f"no session logs found under {root}")
+        raise typer.Exit
+
+    engine = default_engine()
+    result = dsh_importer.import_paths(files, engine)
+
+    written = 0
+    if result.events:
+        with database.connection() as conn:
+            database.ensure_partitions(conn, [e.ts for e in result.events])
+            written = repository.insert_events(conn, result.events)
+            repository.refresh_rollups(
+                conn,
+                min(e.ts for e in result.events).replace(minute=0, second=0, microsecond=0),
+                max(e.ts for e in result.events),
+            )
+
+    _echo_json(
+        {
+            "sessions_read": result.sessions_read,
+            "events_parsed": result.events_accepted,
+            "events_written": written,
+            "events_unpriced": result.events_unpriced,
+            "unpriced_models": result.unpriced_models,
+        }
+    )
 
 
 @app.command()
@@ -238,11 +293,28 @@ def report(
 def whatif(
     targets: Annotated[list[str], typer.Argument(help="Model keys to reprice against.")],
     days: Days = 30,
+    provider: Annotated[
+        list[str] | None,
+        typer.Option(
+            help=(
+                "Only reprice traffic from these providers, e.g. --provider ollama. "
+                "The counterfactual for self-hosted traffic: baseline_usd is legitimately $0 "
+                "(WARN_UNPRICED_BASELINE says so), so this answers 'what would this have cost "
+                "on a real API' rather than 'how much cheaper is the target'."
+            )
+        ),
+    ] = None,
 ) -> None:
     """Reprice recent traffic against other models."""
     engine = default_engine()
+    now = datetime.now(UTC)
+    filters = Filters(
+        since=now - timedelta(days=days),
+        until=now,
+        provider=tuple(provider) if provider else (),
+    )
     with database.connection() as conn:
-        samples, scale = whatif_service.load_samples(conn, filters=_window(days))
+        samples, scale = whatif_service.load_samples(conn, filters=filters)
     results = whatif_service.compare(engine, samples, targets=targets, scale_factor=scale)
     _echo_json(
         [
@@ -253,6 +325,8 @@ def whatif(
                 "projected_usd": r.projected_usd.quantize(Decimal("0.0001")),
                 "delta_pct": None if r.delta_pct is None else round(r.delta_pct, 2),
                 "refolded_cache_tokens": r.refolded_cache_tokens,
+                "baseline_unpriced_requests": r.baseline_unpriced_requests,
+                "is_complete": r.is_complete,
                 "warnings": list(r.warnings),
                 "quality": r.quality.status,
             }

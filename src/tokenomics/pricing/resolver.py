@@ -38,6 +38,14 @@ _VENDOR_PREFIXES = (
     "twelvelabs.",
 )
 
+# Providers whose rates are whatever the operator pays to run the deployment -- usually $0 --
+# and never another vendor's. The normalized rung's cross-provider fallback exists so a bare
+# name still prices *something*, which is right for e.g. "gpt-4o" served through an unlisted
+# gateway. It is wrong here: guessing a hosted provider's price for self-hosted traffic would
+# silently bill a free `deepseek-r1` run at, say, Azure rates. See resolver.py's ModelResolver
+# rung 3 -- these providers get UNPRICED instead of a same-name guess.
+_SELF_HOSTED_PROVIDERS = frozenset({"ollama", "vllm", "llamacpp", "lmstudio"})
+
 _REPACKAGER_PREFIXES = ("databricks-", "accounts/fireworks/models/")
 
 # Version / date stamps that do not change price.
@@ -161,16 +169,26 @@ class ModelResolver:
         base = normalize(name)
         candidates = self._normalized_index.get(base, ())
         if candidates:
-            chosen = candidates[0]
+            chosen: str | None = candidates[0]
             if provider:
-                for key in candidates:
-                    entry = self.book.get(key)
-                    if entry is not None and entry.provider == provider:
-                        chosen = key
-                        break
-            tried.append(f"~{base}")
-            pricing = self.book.get(chosen)
-            if pricing is not None:
-                return Resolution(Method.NORMALIZED, chosen, pricing, tuple(tried))
+                same_provider = next(
+                    (
+                        key
+                        for key in candidates
+                        if (entry := self.book.get(key)) is not None and entry.provider == provider
+                    ),
+                    None,
+                )
+                if same_provider is not None:
+                    chosen = same_provider
+                elif provider in _SELF_HOSTED_PROVIDERS:
+                    # No candidate is actually served by this self-hosted provider --
+                    # UNPRICED, not another vendor's rate for a same-named model.
+                    chosen = None
+            if chosen is not None:
+                tried.append(f"~{base}")
+                pricing = self.book.get(chosen)
+                if pricing is not None:
+                    return Resolution(Method.NORMALIZED, chosen, pricing, tuple(tried))
 
         return Resolution(Method.UNPRICED, candidates=tuple(tried))
