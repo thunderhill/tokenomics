@@ -17,6 +17,25 @@ traces you already emit.
 
 ---
 
+## Screenshots
+
+![Tokenomics dashboard](docs/images/dashboard.png)
+
+*Spend, budget burn-down, anomaly detection with probable cause, and cache economics
+across a real multi-provider estate.*
+
+Agent harnesses are a first-class source, not just SDK-instrumented apps. `tokenomics
+import dsh` reads [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
+session logs directly and prices them — correctly landing self-hosted (Ollama) runs as
+`UNPRICED` rather than guessing a hosted provider's rate for a same-named model, so a
+free local session can still be honestly repriced against a real API via `tokenomics
+whatif --provider ollama`.
+
+<p float="left">
+  <img src="docs/images/dsh-chat.png" alt="dsh chat" width="49%">
+  <img src="docs/images/dsh-trajectory.png" alt="dsh trajectory" width="49%">
+</p>
+
 ## Why this exists
 
 | Capability | Langfuse | LiteLLM | **Tokenomics** |
