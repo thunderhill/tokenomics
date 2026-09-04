@@ -11,6 +11,7 @@ It is deliberately **not** another tracing tool. It consumes the OpenTelemetry G
 traces you already emit.
 
 [![GitHub](https://img.shields.io/badge/GitHub-thunderhill%2Ftokenomics-181717?logo=github)](https://github.com/thunderhill/tokenomics)
+[![CI](https://github.com/thunderhill/tokenomics/actions/workflows/ci.yml/badge.svg)](https://github.com/thunderhill/tokenomics/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)
 
